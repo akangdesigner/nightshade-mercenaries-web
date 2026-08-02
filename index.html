@@ -250,6 +250,27 @@ body {
 	});
 }());
 		</script>
+		<script>
+// 抓住 Godot 建立的 AudioContext。瀏覽器的自動播放限制讓它一出生就是 suspended,
+// 而 Godot 只在「畫布收到輸入」時才 resume——玩家按的「進入遊戲」是蓋在畫布上的
+// HTML 按鈕,那一下傳不到畫布,於是主選單的 BGM 一路啞著(kc 2026-08-02 回報)。
+// 這裡把 context 留下來,按鈕按下去時自己 resume,音樂就從主選單第一秒開始。
+(function () {
+	const Native = window.AudioContext || window.webkitAudioContext;
+	if (!Native) {
+		return;
+	}
+	window.__godotAudioContexts = [];
+	const Patched = function (...args) {
+		const ctx = new Native(...args);
+		window.__godotAudioContexts.push(ctx);
+		return ctx;
+	};
+	Patched.prototype = Native.prototype;
+	window.AudioContext = Patched;
+	window.webkitAudioContext = Patched;
+}());
+		</script>
 	</head>
 	<body>
 		<canvas id="canvas">
@@ -350,6 +371,8 @@ const AUTO_START = false;
 			return;
 		}
 		initializing = false;
+		// 玩家真正的第一下手勢在這裡,趁這一下把音訊叫醒(見 head 裡的 AudioContext 包裝)。
+		resumeAudio();
 		statusOverlay.classList.add('done');
 		setTimeout(() => statusOverlay.remove(), 500);
 		canvas.focus();
@@ -364,6 +387,20 @@ const AUTO_START = false;
 		statusOverlay.classList.add('ready');
 		enterButton.focus();
 	}
+
+	// 沒有這一下,BGM 會啞到玩家碰巧點到畫布為止;AUTO_START 的情況下則是永遠不響。
+	function resumeAudio() {
+		(window.__godotAudioContexts || []).forEach((ctx) => {
+			if (ctx.state !== 'running') {
+				ctx.resume().catch(() => {});
+			}
+		});
+	}
+
+	// AUTO_START 或任何繞過按鈕的路徑,補一層:第一次碰畫面就叫醒音訊。
+	['pointerdown', 'keydown', 'touchstart'].forEach((evt) => {
+		window.addEventListener(evt, resumeAudio, { once: false, passive: true });
+	});
 
 	enterButton.addEventListener('click', hideOverlay);
 
